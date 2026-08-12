@@ -6,8 +6,6 @@ Arduino sensor project for golf. Mounted IMU sensor on the club shaft allows for
 * Swing plane
 * Acceleration
 
-[Repo Link](https://github.com/georgesoto2000/swing-monitor)
-
 ## Hardware
 
 * [Ardunio Nano ESP32](https://thepihut.com/products/arduino-nano-esp32-with-headers)

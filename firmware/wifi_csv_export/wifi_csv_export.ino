@@ -17,6 +17,7 @@
 //
 // CSV columns: millis,type,x,y,z,w  (w only populated for QUAT rows)
 
+#include <Wire.h>
 #include <WiFi.h>
 #include <Adafruit_BNO08x.h>
 
@@ -63,6 +64,11 @@ void setup() {
       delay(10);
     }
   }
+
+  // Bump from the 100kHz default to 400kHz (I2C fast mode) — set after
+  // begin_I2C() so the library's own Wire.begin() doesn't reset it back.
+  Wire.setClock(400000);
+
   setReports();
 
   Serial.println("Waiting for laptop to connect...");

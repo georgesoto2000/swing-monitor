@@ -44,3 +44,7 @@ Arduino sensor project for golf. Mounted IMU sensor on the club shaft allows for
 7. **Display** — companion app or device to receive and display metrics in real time
 8. **Enclosure refinement** — iterate on 3D printed casing for secure, low-profile shaft mounting
 
+## Python Coding Standards
+
+* All functions and classes should be docstring-ed and type hinted
+

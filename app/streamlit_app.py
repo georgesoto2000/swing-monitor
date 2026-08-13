@@ -53,11 +53,7 @@ if "stream" not in st.session_state:
     }
 
 status = st.empty()
-
-
-def _fmt_time(epoch_s: float) -> str:
-    """Format an epoch-seconds timestamp as local HH:MM:SS.mmm."""
-    return datetime.fromtimestamp(epoch_s).astimezone().strftime("%H:%M:%S.%f")[:-3]
+session = st.empty()
 
 
 def _windowed(rows: list[dict], window_s: float | None) -> list[dict]:
@@ -99,11 +95,9 @@ def _trend_chart(rows: list[dict], value_fn, height: int = 150) -> alt.Chart:
 def live_view():
     stream = st.session_state.stream
     buffers = st.session_state.buffers
-    # Widget state for "paused" is already up to date by this point in the
-    # rerun (Streamlit applies the toggle click before re-running the
-    # script), even though the toggle itself is drawn further down. Reading
-    # it here lets pausing take effect the same tick it's clicked.
-    paused = st.session_state.get("paused", False)
+    if "paused" not in st.session_state:
+        st.session_state.paused = False
+    paused = st.session_state.paused
 
     drained = 0
     while not stream.queue.empty():
@@ -118,34 +112,38 @@ def live_view():
         unsafe_allow_html=True,
     )
 
-    log_note = f" · logging to {stream.log_path}" if stream.log_path else ""
     if paused:
-        status.caption("⏸ paused — graphs frozen (still recording)" + log_note)
+        status.caption("⏸ Paused: graphs frozen, still recording")
     elif stream.connected:
         status.caption(
-            (
-                f"connected — +{drained} samples this tick"
-                if drained
-                else "connected — waiting for data..."
-            )
-            + log_note
+            f"Connected: {drained} samples streaming"
+            if drained
+            else "Connected: waiting for data..."
         )
     else:
-        status.caption("not connected — join the swing-monitor WiFi hotspot" + log_note)
+        status.caption("Not connected: join the swing-monitor WiFi hotspot")
 
-    window_col, pause_col = st.columns([3, 1])
+    if stream.log_path:
+        session.caption(f"Session name: {stream.log_path.stem}")
+
+    window_col, club_col, pause_col, _spacer = st.columns([1, 1, 1, 3])
     with window_col:
         window_choice = st.selectbox(
             "Rolling window", list(WINDOW_OPTIONS.keys()), key="window_choice"
         )
+    with club_col:
+        club = st.selectbox("Club", CLUBS, key="club")
     with pause_col:
-        st.toggle(
-            "⏸ Freeze graphs",
-            key="paused",
+        button_label = "▶ Resume" if paused else "⏸ Pause"
+        if st.button(
+            button_label,
             help="Pause all charts on their current view. Data keeps being "
             "received and logged to CSV in the background.",
-        )
+        ):
+            st.session_state.paused = not paused
+            st.rerun()
     window_s = WINDOW_OPTIONS[window_choice]
+    lever_arm_m = CLUB_LEVER_ARM_M[club]
 
     swing_tab, raw_tab = st.tabs(["Swing", "Raw"])
 
@@ -176,9 +174,6 @@ def live_view():
                 st.altair_chart(chart, use_container_width=True)
 
     with swing_tab:
-        club = st.selectbox("Club", CLUBS, key="club")
-        lever_arm_m = CLUB_LEVER_ARM_M[club]
-
         gyro_rows = _windowed(list(buffers["GYRO"]), window_s)
         accel_rows = _windowed(list(buffers["ACCEL"]), window_s)
         gyro_peak = peak_sample(gyro_rows)
@@ -191,7 +186,6 @@ def live_view():
                 f"Peak: {math.degrees(gyro_peak.magnitude):.0f} deg/s",
                 label_visibility="collapsed",
             )
-            st.caption(f"at {_fmt_time(gyro_peak.time)}")
             chart = _trend_chart(gyro_rows, lambda r: math.degrees(magnitude(r)))
             st.altair_chart(chart, use_container_width=True)
         else:
@@ -205,7 +199,6 @@ def live_view():
                 f"Peak: {speed_mps * 2.23694:.1f} mph",
                 label_visibility="collapsed",
             )
-            st.caption(f"{speed_mps:.1f} m/s · {club} lever arm {lever_arm_m:.2f}m")
             chart = _trend_chart(
                 gyro_rows,
                 lambda r: magnitude(r) * lever_arm_m * 2.23694,
@@ -221,12 +214,6 @@ def live_view():
                 f"Peak: {accel_peak.magnitude:.1f} m/s²",
                 label_visibility="collapsed",
             )
-            sharp = (
-                f"{accel_peak.sharpness:.0f} m/s³"
-                if accel_peak.sharpness is not None
-                else "n/a"
-            )
-            st.caption(f"sharpness {sharp} · at {_fmt_time(accel_peak.time)}")
             chart = _trend_chart(accel_rows, magnitude)
             st.altair_chart(chart, use_container_width=True)
         else:

@@ -10,7 +10,6 @@ import queue
 import socket
 import threading
 import time
-from typing import Optional
 
 HOST = "192.168.4.1"
 PORT = 5005
@@ -21,9 +20,9 @@ class SwingStream:
     def __init__(self, host: str = HOST, port: int = PORT):
         self.host = host
         self.port = port
-        self.queue: "queue.Queue[dict]" = queue.Queue()
+        self.queue: queue.Queue[dict] = queue.Queue()
         self.connected = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def start(self):
@@ -51,10 +50,16 @@ class SwingStream:
             self.connected = True
             sock.settimeout(1.0)
             buf = b""
+            # The board only knows ms-since-boot, not wall-clock time (it's an
+            # isolated AP with no NTP/RTC). Anchor its millis to our own clock
+            # at connect time so rows carry real time-of-day without adding
+            # network-jitter noise to the device's own sample timing.
+            anchor_millis: int | None = None
+            anchor_wall: float | None = None
             while not self._stop.is_set():
                 try:
                     chunk = sock.recv(4096)
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 if not chunk:
                     break
@@ -63,10 +68,16 @@ class SwingStream:
                 for line in lines:
                     row = self._parse(line.decode("utf-8", errors="ignore").strip())
                     if row:
+                        if anchor_millis is None:
+                            anchor_millis = row["millis"]
+                            anchor_wall = time.time()
+                        row["time"] = (
+                            anchor_wall + (row["millis"] - anchor_millis) / 1000.0
+                        )
                         self.queue.put(row)
 
     @staticmethod
-    def _parse(line: str) -> Optional[dict]:
+    def _parse(line: str) -> dict | None:
         if not line or line.startswith("millis"):
             return None
         parts = line.split(",")

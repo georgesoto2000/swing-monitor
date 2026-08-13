@@ -9,10 +9,10 @@ firmware changes are needed.
 """
 
 from collections import deque
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-
 from swing_stream import SwingStream
 
 WINDOW_SIZE = 300  # samples kept on screen per channel
@@ -29,6 +29,7 @@ if "stream" not in st.session_state:
         "QUAT": deque(maxlen=WINDOW_SIZE),
     }
 
+clock = st.empty()
 status = st.empty()
 
 
@@ -42,6 +43,9 @@ def live_view():
         row = stream.queue.get_nowait()
         buffers[row["type"]].append(row)
         drained += 1
+
+    now = datetime.now().astimezone()
+    clock.caption(f"Current time: {now.strftime('%H:%M:%S.%f')[:-3]}")
 
     if stream.connected:
         status.caption(
@@ -58,7 +62,8 @@ def live_view():
             st.subheader(kind)
             data = list(buffers[kind])
             if data:
-                df = pd.DataFrame(data).set_index("millis")[["x", "y", "z"]]
+                df = pd.DataFrame(data).set_index("time")[["x", "y", "z"]]
+                df.index = pd.to_datetime(df.index, unit="s")
                 st.line_chart(df, height=250)
 
 

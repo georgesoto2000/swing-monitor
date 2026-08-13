@@ -24,7 +24,18 @@ from swing_metrics import (
 )
 from swing_stream import SwingStream
 
-WINDOW_SIZE = 300  # samples kept on screen per channel
+DEFAULT_WINDOW_SAMPLES = 300  # "Auto" view: samples kept on screen per channel
+# Deque capacity: generous headroom above 20s at the sensor's ~200Hz report
+# rate, so buffers don't drop samples before the widest selectable window
+# has a chance to display them.
+BUFFER_MAXLEN = 4500
+WINDOW_OPTIONS = {
+    "Auto": None,
+    "5 second": 5,
+    "10 second": 10,
+    "15 second": 15,
+    "20 second": 20,
+}
 
 st.set_page_config(page_title="Swing Monitor", layout="wide")
 st.title("Swing Monitor — Live")
@@ -33,9 +44,9 @@ if "stream" not in st.session_state:
     st.session_state.stream = SwingStream()
     st.session_state.stream.start()
     st.session_state.buffers = {
-        "ACCEL": deque(maxlen=WINDOW_SIZE),
-        "GYRO": deque(maxlen=WINDOW_SIZE),
-        "QUAT": deque(maxlen=WINDOW_SIZE),
+        "ACCEL": deque(maxlen=BUFFER_MAXLEN),
+        "GYRO": deque(maxlen=BUFFER_MAXLEN),
+        "QUAT": deque(maxlen=BUFFER_MAXLEN),
     }
 
 clock = st.empty()
@@ -45,6 +56,21 @@ status = st.empty()
 def _fmt_time(epoch_s: float) -> str:
     """Format an epoch-seconds timestamp as local HH:MM:SS.mmm."""
     return datetime.fromtimestamp(epoch_s).astimezone().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _windowed(rows: list[dict], window_s: float | None) -> list[dict]:
+    """Trim ``rows`` to the selected rolling window.
+
+    ``window_s`` of None is the "Auto" option — the fixed-count default
+    view. A number trims to the last ``window_s`` seconds relative to the
+    newest sample's timestamp.
+    """
+    if window_s is None:
+        return rows[-DEFAULT_WINDOW_SAMPLES:]
+    if not rows:
+        return rows
+    cutoff = rows[-1]["time"] - window_s
+    return [r for r in rows if r["time"] >= cutoff]
 
 
 def _trend_chart(rows: list[dict], value_fn, height: int = 150) -> alt.Chart:
@@ -90,19 +116,23 @@ def live_view():
     else:
         status.caption("not connected — join the swing-monitor WiFi hotspot")
 
+    window_choice = st.selectbox(
+        "Rolling window", list(WINDOW_OPTIONS.keys()), key="window_choice"
+    )
+    window_s = WINDOW_OPTIONS[window_choice]
+
     raw_tab, swing_tab = st.tabs(["Raw", "Swing"])
 
     with raw_tab:
         for kind in ["ACCEL", "GYRO", "QUAT"]:
             st.subheader(kind)
-            data = list(buffers[kind])
+            data = _windowed(list(buffers[kind]), window_s)
             if data:
                 df = pd.DataFrame(data)[["time", "x", "y", "z"]]
                 df["time"] = pd.to_datetime(df["time"], unit="s")
                 long_df = df.melt(id_vars="time", var_name="axis", value_name="value")
-                # WINDOW_SIZE samples at up to 200Hz is only ~1.5s on
-                # screen — the default axis format rounds to whole
-                # seconds, so every tick would show the same label.
+                # Millisecond-precision axis: short windows would otherwise
+                # round to whole seconds and every tick would look the same.
                 chart = (
                     alt.Chart(long_df)
                     .mark_line()
@@ -128,8 +158,8 @@ def live_view():
         club = st.selectbox("Club", CLUBS, key="club")
         lever_arm_m = CLUB_LEVER_ARM_M[club]
 
-        gyro_rows = list(buffers["GYRO"])
-        accel_rows = list(buffers["ACCEL"])
+        gyro_rows = _windowed(list(buffers["GYRO"]), window_s)
+        accel_rows = _windowed(list(buffers["ACCEL"]), window_s)
         gyro_peak = peak_sample(gyro_rows)
         accel_peak = peak_sample(accel_rows)
 

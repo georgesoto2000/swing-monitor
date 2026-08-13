@@ -19,6 +19,7 @@ from swing_metrics import (
     CLUB_LEVER_ARM_M,
     CLUBS,
     estimated_clubhead_speed_mps,
+    magnitude,
     peak_sample,
 )
 from swing_stream import SwingStream
@@ -44,6 +45,26 @@ status = st.empty()
 def _fmt_time(epoch_s: float) -> str:
     """Format an epoch-seconds timestamp as local HH:MM:SS.mmm."""
     return datetime.fromtimestamp(epoch_s).astimezone().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _trend_chart(rows: list[dict], value_fn, height: int = 150) -> alt.Chart:
+    """A small single-line time chart of ``value_fn(row)`` for each row."""
+    df = pd.DataFrame(
+        {
+            "time": [r["time"] for r in rows],
+            "value": [value_fn(r) for r in rows],
+        }
+    )
+    df["time"] = pd.to_datetime(df["time"], unit="s")
+    return (
+        alt.Chart(df)
+        .mark_line()
+        .encode(
+            x=alt.X("time:T", title="time", axis=alt.Axis(format="%H:%M:%S.%L")),
+            y=alt.Y("value:Q", title=None),
+        )
+        .properties(height=height)
+    )
 
 
 @st.fragment(run_every=0.1)
@@ -107,46 +128,61 @@ def live_view():
         club = st.selectbox("Club", CLUBS, key="club")
         lever_arm_m = CLUB_LEVER_ARM_M[club]
 
-        gyro_peak = peak_sample(list(buffers["GYRO"]))
-        accel_peak = peak_sample(list(buffers["ACCEL"]))
+        gyro_rows = list(buffers["GYRO"])
+        accel_rows = list(buffers["ACCEL"])
+        gyro_peak = peak_sample(gyro_rows)
+        accel_peak = peak_sample(accel_rows)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if gyro_peak:
-                st.metric(
-                    "Peak angular velocity",
-                    f"{math.degrees(gyro_peak.magnitude):.0f} deg/s",
-                )
-                st.caption(f"at {_fmt_time(gyro_peak.time)}")
-            else:
-                st.metric("Peak angular velocity", "—")
+        st.subheader("Peak angular velocity")
+        if gyro_peak:
+            st.metric(
+                "Peak angular velocity",
+                f"{math.degrees(gyro_peak.magnitude):.0f} deg/s",
+                label_visibility="collapsed",
+            )
+            st.caption(f"at {_fmt_time(gyro_peak.time)}")
+            chart = _trend_chart(gyro_rows, lambda r: math.degrees(magnitude(r)))
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.metric("Peak angular velocity", "—", label_visibility="collapsed")
 
-        with col2:
-            if gyro_peak:
-                speed_mps = estimated_clubhead_speed_mps(
-                    gyro_peak.magnitude, lever_arm_m
-                )
-                st.metric(
-                    "Peak clubhead speed (est.)", f"{speed_mps * 2.23694:.1f} mph"
-                )
-                st.caption(
-                    f"{speed_mps:.1f} m/s · {club} lever arm {lever_arm_m:.2f}m "
-                    "(measured PW, extrapolated for others)"
-                )
-            else:
-                st.metric("Peak clubhead speed (est.)", "—")
+        st.subheader("Peak clubhead speed (est.)")
+        if gyro_peak:
+            speed_mps = estimated_clubhead_speed_mps(gyro_peak.magnitude, lever_arm_m)
+            st.metric(
+                "Peak clubhead speed (est.)",
+                f"{speed_mps * 2.23694:.1f} mph",
+                label_visibility="collapsed",
+            )
+            st.caption(
+                f"{speed_mps:.1f} m/s · {club} lever arm {lever_arm_m:.2f}m "
+                "(measured PW, extrapolated for others)"
+            )
+            chart = _trend_chart(
+                gyro_rows,
+                lambda r: magnitude(r) * lever_arm_m * 2.23694,
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.metric("Peak clubhead speed (est.)", "—", label_visibility="collapsed")
 
-        with col3:
-            if accel_peak:
-                st.metric("Peak accel spike", f"{accel_peak.magnitude:.1f} m/s²")
-                sharp = (
-                    f"{accel_peak.sharpness:.0f} m/s³"
-                    if accel_peak.sharpness is not None
-                    else "n/a"
-                )
-                st.caption(f"sharpness {sharp} · at {_fmt_time(accel_peak.time)}")
-            else:
-                st.metric("Peak accel spike", "—")
+        st.subheader("Peak accel spike")
+        if accel_peak:
+            st.metric(
+                "Peak accel spike",
+                f"{accel_peak.magnitude:.1f} m/s²",
+                label_visibility="collapsed",
+            )
+            sharp = (
+                f"{accel_peak.sharpness:.0f} m/s³"
+                if accel_peak.sharpness is not None
+                else "n/a"
+            )
+            st.caption(f"sharpness {sharp} · at {_fmt_time(accel_peak.time)}")
+            chart = _trend_chart(accel_rows, magnitude)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.metric("Peak accel spike", "—", label_visibility="collapsed")
 
 
 live_view()

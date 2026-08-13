@@ -40,7 +40,7 @@ class PeakSample(NamedTuple):
     sharpness: float | None
 
 
-def _magnitude(row: dict) -> float:
+def magnitude(row: dict) -> float:
     """Return the Euclidean magnitude of a row's x/y/z fields."""
     return math.sqrt(row["x"] ** 2 + row["y"] ** 2 + row["z"] ** 2)
 
@@ -55,7 +55,7 @@ def peak_sample(rows: list[dict]) -> PeakSample | None:
     """
     if not rows:
         return None
-    mags = [_magnitude(r) for r in rows]
+    mags = [magnitude(r) for r in rows]
     idx = max(range(len(mags)), key=lambda i: mags[i])
 
     sharpness = None

@@ -1,5 +1,6 @@
 .DS_Store
 data/*.csv
+data/sessions/
 __pycache__
 venv/
 .ruff_cache

@@ -6,22 +6,31 @@ reruns never block on network I/O. Parsed rows are handed off through a
 thread-safe queue for the UI to drain on each rerun.
 """
 
+import csv
 import queue
 import socket
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 HOST = "192.168.4.1"
 PORT = 5005
 RECONNECT_DELAY_S = 2
+LOG_DIR = Path(__file__).resolve().parent.parent / "data" / "sessions"
+CSV_FIELDS = ["millis", "type", "x", "y", "z", "w", "time_iso"]
 
 
 class SwingStream:
-    def __init__(self, host: str = HOST, port: int = PORT):
+    def __init__(self, host: str = HOST, port: int = PORT, log_dir: Path = LOG_DIR):
         self.host = host
         self.port = port
         self.queue: queue.Queue[dict] = queue.Queue()
         self.connected = False
+        self.log_path: Path | None = None
+        self._log_dir = log_dir
+        self._csv_file = None
+        self._csv_writer = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -29,11 +38,48 @@ class SwingStream:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self._open_log()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._stop.set()
+        self._close_log()
+
+    def _open_log(self):
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_path = self._log_dir / f"live_{timestamp}.csv"
+        self._csv_file = self.log_path.open("w", newline="")
+        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=CSV_FIELDS)
+        self._csv_writer.writeheader()
+
+    def _close_log(self):
+        if self._csv_file:
+            self._csv_file.close()
+        self._csv_file = None
+        self._csv_writer = None
+
+    def _log_row(self, row: dict):
+        if not self._csv_writer:
+            return
+        time_iso = (
+            datetime.fromtimestamp(row["time"])
+            .astimezone()
+            .isoformat(timespec="milliseconds")
+        )
+        self._csv_writer.writerow(
+            {
+                "millis": row["millis"],
+                "type": row["type"],
+                "x": row["x"],
+                "y": row["y"],
+                "z": row["z"],
+                "w": row["w"],
+                "time_iso": time_iso,
+            }
+        )
+        self._csv_file.flush()
 
     def _run(self):
         while not self._stop.is_set():
@@ -74,6 +120,7 @@ class SwingStream:
                         row["time"] = (
                             anchor_wall + (row["millis"] - anchor_millis) / 1000.0
                         )
+                        self._log_row(row)
                         self.queue.put(row)
 
     @staticmethod

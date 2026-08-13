@@ -38,7 +38,10 @@ WINDOW_OPTIONS = {
 }
 
 st.set_page_config(page_title="Swing Monitor", layout="wide")
-st.title("Swing Monitor — Live")
+
+title_col, clock_col = st.columns([2, 1])
+title_col.title("Swing Monitor — Live")
+clock = clock_col.empty()
 
 if "stream" not in st.session_state:
     st.session_state.stream = SwingStream()
@@ -49,7 +52,6 @@ if "stream" not in st.session_state:
         "QUAT": deque(maxlen=BUFFER_MAXLEN),
     }
 
-clock = st.empty()
 status = st.empty()
 
 
@@ -97,31 +99,55 @@ def _trend_chart(rows: list[dict], value_fn, height: int = 150) -> alt.Chart:
 def live_view():
     stream = st.session_state.stream
     buffers = st.session_state.buffers
+    # Widget state for "paused" is already up to date by this point in the
+    # rerun (Streamlit applies the toggle click before re-running the
+    # script), even though the toggle itself is drawn further down. Reading
+    # it here lets pausing take effect the same tick it's clicked.
+    paused = st.session_state.get("paused", False)
 
     drained = 0
     while not stream.queue.empty():
         row = stream.queue.get_nowait()
-        buffers[row["type"]].append(row)
+        if not paused:
+            buffers[row["type"]].append(row)
         drained += 1
 
     now = datetime.now().astimezone()
-    clock.caption(f"Current time: {now.strftime('%H:%M:%S.%f')[:-3]}")
+    clock.markdown(
+        f"<h1 style='text-align:right'>{now.strftime('%H:%M:%S.%f')[:-3]}</h1>",
+        unsafe_allow_html=True,
+    )
 
-    if stream.connected:
+    log_note = f" · logging to {stream.log_path}" if stream.log_path else ""
+    if paused:
+        status.caption("⏸ paused — graphs frozen (still recording)" + log_note)
+    elif stream.connected:
         status.caption(
-            f"connected — +{drained} samples this tick"
-            if drained
-            else "connected — waiting for data..."
+            (
+                f"connected — +{drained} samples this tick"
+                if drained
+                else "connected — waiting for data..."
+            )
+            + log_note
         )
     else:
-        status.caption("not connected — join the swing-monitor WiFi hotspot")
+        status.caption("not connected — join the swing-monitor WiFi hotspot" + log_note)
 
-    window_choice = st.selectbox(
-        "Rolling window", list(WINDOW_OPTIONS.keys()), key="window_choice"
-    )
+    window_col, pause_col = st.columns([3, 1])
+    with window_col:
+        window_choice = st.selectbox(
+            "Rolling window", list(WINDOW_OPTIONS.keys()), key="window_choice"
+        )
+    with pause_col:
+        st.toggle(
+            "⏸ Freeze graphs",
+            key="paused",
+            help="Pause all charts on their current view. Data keeps being "
+            "received and logged to CSV in the background.",
+        )
     window_s = WINDOW_OPTIONS[window_choice]
 
-    raw_tab, swing_tab = st.tabs(["Raw", "Swing"])
+    swing_tab, raw_tab = st.tabs(["Swing", "Raw"])
 
     with raw_tab:
         for kind in ["ACCEL", "GYRO", "QUAT"]:
@@ -150,11 +176,6 @@ def live_view():
                 st.altair_chart(chart, use_container_width=True)
 
     with swing_tab:
-        st.caption(
-            "First-pass metrics: peak values over the samples currently on "
-            "screen, not yet tied to a detected swing (see the README's "
-            "'Swing event detection' project-plan step)."
-        )
         club = st.selectbox("Club", CLUBS, key="club")
         lever_arm_m = CLUB_LEVER_ARM_M[club]
 
@@ -163,44 +184,41 @@ def live_view():
         gyro_peak = peak_sample(gyro_rows)
         accel_peak = peak_sample(accel_rows)
 
-        st.subheader("Peak angular velocity")
+        st.subheader("Angular Velocity")
         if gyro_peak:
             st.metric(
-                "Peak angular velocity",
-                f"{math.degrees(gyro_peak.magnitude):.0f} deg/s",
+                "Angular Velocity",
+                f"Peak: {math.degrees(gyro_peak.magnitude):.0f} deg/s",
                 label_visibility="collapsed",
             )
             st.caption(f"at {_fmt_time(gyro_peak.time)}")
             chart = _trend_chart(gyro_rows, lambda r: math.degrees(magnitude(r)))
             st.altair_chart(chart, use_container_width=True)
         else:
-            st.metric("Peak angular velocity", "—", label_visibility="collapsed")
+            st.metric("Angular Velocity", "Peak: —", label_visibility="collapsed")
 
-        st.subheader("Peak clubhead speed (est.)")
+        st.subheader("Clubhead Speed")
         if gyro_peak:
             speed_mps = estimated_clubhead_speed_mps(gyro_peak.magnitude, lever_arm_m)
             st.metric(
-                "Peak clubhead speed (est.)",
-                f"{speed_mps * 2.23694:.1f} mph",
+                "Clubhead Speed",
+                f"Peak: {speed_mps * 2.23694:.1f} mph",
                 label_visibility="collapsed",
             )
-            st.caption(
-                f"{speed_mps:.1f} m/s · {club} lever arm {lever_arm_m:.2f}m "
-                "(measured PW, extrapolated for others)"
-            )
+            st.caption(f"{speed_mps:.1f} m/s · {club} lever arm {lever_arm_m:.2f}m")
             chart = _trend_chart(
                 gyro_rows,
                 lambda r: magnitude(r) * lever_arm_m * 2.23694,
             )
             st.altair_chart(chart, use_container_width=True)
         else:
-            st.metric("Peak clubhead speed (est.)", "—", label_visibility="collapsed")
+            st.metric("Clubhead Speed", "Peak: —", label_visibility="collapsed")
 
-        st.subheader("Peak accel spike")
+        st.subheader("Acceleration")
         if accel_peak:
             st.metric(
-                "Peak accel spike",
-                f"{accel_peak.magnitude:.1f} m/s²",
+                "Acceleration",
+                f"Peak: {accel_peak.magnitude:.1f} m/s²",
                 label_visibility="collapsed",
             )
             sharp = (
@@ -212,7 +230,7 @@ def live_view():
             chart = _trend_chart(accel_rows, magnitude)
             st.altair_chart(chart, use_container_width=True)
         else:
-            st.metric("Peak accel spike", "—", label_visibility="collapsed")
+            st.metric("Acceleration", "Peak: —", label_visibility="collapsed")
 
 
 live_view()

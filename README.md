@@ -33,3 +33,14 @@ Arduino sensor project for golf. Mounted IMU sensor on the club shaft allows for
 * LiPo 3.7v Battery
 * 3D printed casing
 
+## Project Plan
+
+1. **Hardware assembly** — wire BNO085 to Nano ESP32 (I2C/Qwiic), confirm power draw against LiPo capacity, mount in 3D printed casing on shaft
+2. **Sensor bring-up** — read raw accelerometer/gyroscope and fused orientation (quaternion) output from the BNO085, verify sample rate is sufficient to capture a swing (target 100Hz+) — see [`firmware/sensor_bringup`](firmware/sensor_bringup/sensor_bringup.ino)
+3. **Swing event detection** — segment a continuous data stream into address, top of backswing, impact, and finish
+4. **Metric calculation** — compute per-swing metrics (speed, timing, plane, rotational/release, impact) from segmented data
+5. **Calibration & validation** — sanity-check computed metrics against known reference values (e.g. compare clubhead speed estimates to a radar/launch monitor) and tune impact/event detection thresholds
+6. **Data transfer** — stream metrics over BLE from the Nano ESP32
+7. **Display** — companion app or device to receive and display metrics in real time
+8. **Enclosure refinement** — iterate on 3D printed casing for secure, low-profile shaft mounting
+
